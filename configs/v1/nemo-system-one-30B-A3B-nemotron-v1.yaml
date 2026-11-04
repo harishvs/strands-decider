@@ -1,0 +1,93 @@
+# nemo-system-one-30B-A3B-nemotron-v1: the v1 recipe on NVIDIA Nemotron-3-Nano-Omni-30B-A3B, seed 0.
+# Derived from configs/v1/strands-decider-26B-A4B-gemma4-v1-2610.yaml (the repository's other
+# mixture-of-experts torso); the differences are listed below.
+#
+# The data is hobson-v21's (123,339 rows) WITHOUT the v1 recipe's 12,263 code-task rows:
+# data/code_v27.jsonl is built outside this repository and is not published, so this
+# recipe cannot read it. Those rows came last in train_files, so the teacher_v20 indices
+# into the remaining files are unchanged. Expect weaker code-task scores than the Gemma 4
+# v1 models; everything else matches their recipe. Inputs, and where each comes from:
+#   data/train_v5.jsonl, data/multistep_v14.jsonl   `training/recipe.sh build fetch multistep`
+#                                (both recorded in data/SHA256SUMS)
+#   data/generated_v16p.jsonl, data/generated_v18p.jsonl   `recipe.sh generated`
+#   data/adequacy_hs2.jsonl      `recipe.sh fetch adequacy`, from the HelpSteer2 download
+#   data/adequacy_gen.jsonl      `recipe.sh adequacy`, copied from data/synthetic/
+#   data/teacher_v20.jsonl       `recipe.sh distill`
+#   checkpoints/v19-ref          `hf download StrandsAgents/strands-decider-2B-hobson-v19
+#                                --local-dir checkpoints/v19-ref` (Hub bb282d78; its
+#                                MANIFEST.sha256 checks)
+# A build on 2026-11-04 gave the sha256 the 26B-A4B config records for every one of these.
+#
+# The torso: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16 at the pinned revision, its
+# text decoder only (nemotron_h: 23 Mamba-2, 23 mixture-of-experts and 6 attention layers),
+# loaded through transformers' own nemotron_h with no Hub code (modeling.NemotronOmniConfig).
+#
+# Changed from the 26B-A4B config:
+#   base_model, base_revision     the Nemotron Omni BF16 checkpoint, pinned
+#   force_bos: false              its tokenizer adds no BOS and its chat template none either
+#   lora_targets                  attention q/k/v/o, Mamba in_proj, the shared experts. Not
+#                                 Mamba out_proj or conv1d (the training kernel reads their
+#                                 weights directly, so LoRA there never trains), and not the
+#                                 128 routed experts (3-D tensors, as in the 26B-A4B)
+#   train_files                   without data/code_v27.jsonl (above)
+#   output_dir                    this recipe's name
+#   the retired keys num_slots, head_type and head_init are left out
+#
+# Memory, 8x RTX PRO 6000 (96 GB): the torso is 62.5 GB per rank; one forward and backward of
+# 8 rows x 4,096 tokens peaks at 80.8 GB, and no training row exceeds 2,997 tokens.
+#
+# Run (8 GPUs, from the repository root; checkpoints/ and data/raw may be links to fast disk):
+#   training/recipe.sh build fetch multistep generated adequacy distill
+#   hf download StrandsAgents/strands-decider-2B-hobson-v19 --local-dir checkpoints/v19-ref
+#   NGPU=8 TRAIN_CONFIG=configs/v1/nemo-system-one-30B-A3B-nemotron-v1.yaml \
+#     CKPT=checkpoints/nemo-system-one-30B-A3B-v1-s0 training/recipe.sh train
+#   python -m training.evaluate calibrate checkpoints/nemo-system-one-30B-A3B-v1-s0 \
+#     --data data/holdout_v5_norule.jsonl
+#   CKPT=checkpoints/nemo-system-one-30B-A3B-v1-s0 training/recipe.sh eval
+
+train_files: ["data/train_v5.jsonl", "data/multistep_v14.jsonl", "data/generated_v16p.jsonl",
+              "data/generated_v18p.jsonl", "data/adequacy_hs2.jsonl", "data/adequacy_gen.jsonl"]
+val_fraction: 0.03
+
+base_model: "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+base_revision: "e5e9932441de940c9a62185c870ea5bcd4cd24e2"  # Hub main on 2026-11-04
+pointer_dim: 256
+kl_frozen_weight: 0.3   # KL(frozen || student) over the option-number readout
+kl_frozen_reference: "checkpoints/v19-ref"  # the released v19, at temperature 1 (header)
+# The frozen 4B's distributions on the short-task rows where it agrees with the gold label
+# (indices into train_v5), and v14's own on the multi-step rows (offset past train_v5);
+# everything after them carries no teacher.
+teacher_file: "data/teacher_v20.jsonl"
+teacher_weight: 1.0
+head_dropout: 0.05
+max_length: 4096
+force_bos: false        # the tokenizer adds no <s>, and the chat template adds none either
+
+use_lora: true
+lora_r: 16
+lora_alpha: 32
+lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "in_proj",
+               "shared_experts.up_proj", "shared_experts.down_proj"]
+freeze_torso: false     # true = head-only training (much weaker, but very cheap)
+
+epochs: 1
+micro_batch_size: 8
+grad_accum: 4           # effective batch 32
+lr: 0.0001              # LoRA
+head_lr: 0.001          # randomly-initialised head needs a bigger step
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+gradient_checkpointing: true
+
+shuffle_options: true   # the whole point -- do not turn this off
+group_by_length: true   # on: ~2k-token documents among ~250-token rows would otherwise
+                        # pad most batches; it changes batch composition, not content
+ordinal_smoothing: 0.1
+reverse_score_prob: 0.5
+
+output_dir: "checkpoints/nemo-system-one-30B-A3B-v1-s0"
+seed: 0
+log_every: 20
+eval_every: 500
+precompute_frozen_kl: true  # kl_frozen_reference needs it; otherwise speed only

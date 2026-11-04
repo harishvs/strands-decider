@@ -19,13 +19,13 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from huggingface_hub import snapshot_download
-from transformers import AutoConfig, AutoModel, AutoTokenizer
+from transformers import AutoConfig, AutoModel, AutoTokenizer, NemotronHConfig, PretrainedConfig
 
 # Large negative rather than -inf: keeps softmax finite under autocast/bf16, where
 # -inf can produce NaNs if an entire row is masked by a malformed batch.
@@ -35,6 +35,80 @@ GEMMA4_CLASSES = {
     "gemma4": "Gemma4ForConditionalGeneration",
     "gemma4_unified": "Gemma4UnifiedForConditionalGeneration",
 }
+
+
+class NemotronOmniConfig(PretrainedConfig):
+    """The config of nvidia/Nemotron-3-Nano-Omni-* checkpoints, read without their Hub code.
+
+    Those checkpoints wrap a `nemotron_h` text decoder with vision and audio encoders, and
+    their own modeling code (trust_remote_code) calls a transformers masking API that no
+    release this package supports still has. The decoder is transformers' own nemotron_h,
+    so this class only holds the checkpoint's `llm_config` as a NemotronHConfig and leaves
+    the encoders' settings as plain attributes; `_load_torso` loads the decoder alone.
+    """
+
+    model_type = "NemotronH_Nano_Omni_Reasoning_V3"
+
+    def __init__(self, llm_config: dict | NemotronHConfig | None = None, **kwargs: Any):
+        if isinstance(llm_config, dict):
+            # auto_map points at the checkpoint's Hub code; this config never runs it.
+            drop = {"architectures", "auto_map"}
+            llm_config = NemotronHConfig(**{k: v for k, v in llm_config.items() if k not in drop})
+        self.llm_config = llm_config  # before super().__init__, which reads get_text_config
+        super().__init__(**kwargs)
+
+    def get_text_config(self, *args: Any, **kwargs: Any) -> PretrainedConfig:
+        return self.llm_config if self.llm_config is not None else self
+
+
+AutoConfig.register(NemotronOmniConfig.model_type, NemotronOmniConfig, exist_ok=True)
+
+# The kernel functions transformers' nemotron_h resolves at import: mamba-ssm and
+# causal-conv1d if installed, else a reference PyTorch version (see require_mamba_kernels).
+MAMBA_KERNELS = (
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
+    "mamba2_split_conv1d_scan_combined",
+    "mamba2_selective_state_update",
+    "mamba2_chunk_scan",
+)
+# Mamba modules LoRA must not target: in training, the fused kernel reads out_proj's weight
+# directly instead of calling the module, so an adapter there would never train (PEFT
+# refuses both for nemotron_h too, with a less specific message).
+MAMBA_NO_LORA = ("out_proj", "conv1d")
+
+
+def mamba_fallbacks() -> list[str]:
+    """The nemotron_h kernel functions running their PyTorch reference version."""
+    import inspect
+
+    from transformers.models.nemotron_h import modeling_nemotron_h as nh
+
+    return [
+        name
+        for name in MAMBA_KERNELS
+        if not inspect.getclosurevars(getattr(nh, name)).nonlocals.get("is_new_implementation")
+    ]
+
+
+def require_mamba_kernels() -> None:
+    """Refuse a CUDA host without the Mamba kernels.
+
+    transformers falls back to PyTorch with a single log line when mamba-ssm or
+    causal-conv1d is missing, and that path is many times slower and needs far more
+    memory at 4k tokens. On a CPU-only host the fallback is the only path, so warn there.
+    """
+    missing = mamba_fallbacks()
+    if not missing:
+        return
+    msg = (
+        f"nemotron_h is using PyTorch fallbacks for {missing}: install mamba-ssm and causal-conv1d"
+    )
+    if torch.cuda.is_available():
+        raise RuntimeError(msg)
+    import warnings
+
+    warnings.warn(msg, stacklevel=2)
 
 
 def serving_attn_implementation(torso_cfg: Any) -> str | None:
@@ -333,7 +407,11 @@ class StrandsDeciderModel(nn.Module):
         attn_implementation: str | None = None,
     ) -> StrandsDeciderModel:
         """Load the base model's torso (AutoModel, so no LM head) and attach LoRA."""
-        tok = AutoTokenizer.from_pretrained(config.base_model, revision=config.base_revision)
+        # trust_remote_code=False: no base needs Hub code, and without it a base that ships
+        # some (Nemotron Omni) stops at an interactive prompt.
+        tok = AutoTokenizer.from_pretrained(
+            config.base_model, revision=config.base_revision, trust_remote_code=False
+        )
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
         if config.force_bos:
@@ -359,7 +437,9 @@ class StrandsDeciderModel(nn.Module):
             kwargs["device_map"] = device_map
         if attn_implementation:
             kwargs["attn_implementation"] = attn_implementation
-        base_cfg = AutoConfig.from_pretrained(config.base_model, revision=config.base_revision)
+        base_cfg = AutoConfig.from_pretrained(
+            config.base_model, revision=config.base_revision, trust_remote_code=False
+        )
         if base_cfg.model_type in {"qwen3_5", "qwen3_5_text"}:
             # Qwen3.5 checkpoints are multimodal; AutoModel would hand back the wrapper with
             # a vision tower. Load the text tower through its causal-LM class, which maps the
@@ -386,6 +466,39 @@ class StrandsDeciderModel(nn.Module):
             )
             torso = full.model.language_model
             del full
+        elif base_cfg.model_type == NemotronOmniConfig.model_type:
+            # Load the text decoder alone through transformers' nemotron_h, whose converter
+            # renames `backbone.` to `model.` and stacks the 128 routed experts of each MoE
+            # layer into one 3-D tensor (which a LoRA target list cannot reach, as intended).
+            # key_mapping strips the wrapper's `language_model.` prefix; the vision and audio
+            # weights are left unloaded. A missing key would mean random weights, so refuse.
+            import transformers
+
+            require_mamba_kernels()
+            loaded = transformers.NemotronHForCausalLM.from_pretrained(
+                config.base_model,
+                config=base_cfg.get_text_config(),
+                key_mapping={r"^language_model\.": ""},
+                output_loading_info=True,
+                **kwargs,
+            )
+            nemotron, info = cast(tuple[transformers.NemotronHForCausalLM, dict[str, Any]], loaded)
+            if info["missing_keys"]:
+                raise RuntimeError(
+                    f"{config.base_model}: decoder weights not in the checkpoint: "
+                    f"{sorted(info['missing_keys'])[:5]}"
+                )
+            torso = nemotron.model
+            del nemotron
+            # transformers' nemotron_h hard-codes the Mamba step-size limit to
+            # (time_step_min, inf), the clamp of the reference PyTorch path. The checkpoint's
+            # own kernel path passes its config's time_step_limit, (0, 1e30) here, and
+            # small steps occur: the 1e-3 floor moves layer 0's output by 20% (relative L2).
+            # With the config's limit every layer matches nvidia's code to 2e-5 (worklog).
+            limit = tuple(torso.config.time_step_limit)
+            for module in torso.modules():
+                if hasattr(module, "time_step_limit"):
+                    module.time_step_limit = limit
         else:
             torso = AutoModel.from_pretrained(config.base_model, **kwargs)
         if config.host_embeddings:
@@ -408,6 +521,13 @@ class StrandsDeciderModel(nn.Module):
     def attach_lora(self) -> None:
         from peft import LoraConfig, get_peft_model
 
+        if getattr(self.torso.config, "model_type", None) == "nemotron_h":
+            bad = [t for t in self.config.lora_targets if t.split(".")[-1] in MAMBA_NO_LORA]
+            if bad:
+                raise ValueError(
+                    f"lora_targets {bad}: the Mamba training kernel reads out_proj's weight "
+                    "directly, so LoRA there never trains; target in_proj instead"
+                )
         lora_cfg = LoraConfig(
             r=self.config.lora_r,
             lora_alpha=self.config.lora_alpha,
@@ -502,7 +622,10 @@ class StrandsDeciderModel(nn.Module):
         state = {k: v.detach().cpu().contiguous() for k, v in self.head.state_dict().items()}
         save_file(state, os.path.join(path, "head.safetensors"), metadata={"format": "pt"})
         if self.config.use_lora:
-            self.torso.save_pretrained(os.path.join(path, "lora"))
+            # The adapter only: LoRA never trains the embeddings. PEFT's "auto" decides from the
+            # base's config.json, and a multimodal wrapper's has no top-level vocab_size, so
+            # it could judge the table resized and copy it (0.7 GB for Nemotron Omni).
+            self.torso.save_pretrained(os.path.join(path, "lora"), save_embedding_layers=False)
         self.tokenizer.save_pretrained(path)
 
     @classmethod

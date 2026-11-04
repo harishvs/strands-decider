@@ -52,6 +52,9 @@ class TrainConfig:
 
     # model
     base_model: str = "Qwen/Qwen3-1.7B-Base"
+    # Hub revision (commit sha) of base_model to load; None loads its default branch. Saved
+    # with the checkpoint, so load() and serving read the same weights the adapter trained on.
+    base_revision: str | None = None
     head_dropout: float = 0.05
     max_length: int = 3072
     use_lora: bool = True
@@ -178,6 +181,7 @@ RETIRED_YAML_KEYS = frozenset({"num_slots", "head_type", "head_hidden", "head_in
 # The fields of a TrainConfig that a checkpoint fixes: with init_from they are the checkpoint's.
 INIT_FROM_ARCH = (
     "base_model",
+    "base_revision",
     "pointer_dim",
     "use_lora",
     "lora_r",
@@ -469,6 +473,7 @@ def train(cfg: TrainConfig) -> str:
         print(f"[strands-decider] loading base model {cfg.base_model}")
         model_cfg = StrandsDeciderConfig(
             base_model=cfg.base_model,
+            base_revision=cfg.base_revision,
             head_dropout=cfg.head_dropout,
             max_length=cfg.max_length,
             use_lora=cfg.use_lora and not cfg.freeze_torso,
