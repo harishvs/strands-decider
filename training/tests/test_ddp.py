@@ -246,10 +246,23 @@ def worker(cfg_path: str) -> None:
     torch.nn.utils.clip_grad_norm_ = clip
 
     real_call = SystemOneCollator.__call__
+    # The frozen-KL precompute collates every batch again in training mode (the reference
+    # sees the student's renderings); those are not the rows the step trains on.
+    in_reference = [False]
+    real_reference = T._frozen_reference
+
+    def reference(*a, **k):
+        in_reference[0] = True
+        try:
+            return real_reference(*a, **k)
+        finally:
+            in_reference[0] = False
+
+    T._frozen_reference = reference
 
     def call(self, batch):
         out = real_call(self, batch)
-        if self.train:
+        if self.train and not in_reference[0]:
             rows[-1].extend(
                 [
                     (tuple(ids[m.bool()].tolist()), int(lab))
@@ -434,6 +447,29 @@ def test_ddp_init_from_matches_single_process(corpus, tmp_path):
     ref = _run(corpus, tmp_path / "a", 1, **over)
     assert f"continuing from {ckpt}" in ref["stdout"]
     _assert_same_run(ref, _run(corpus, tmp_path / "b", 3, **over), 3)
+
+
+@pytest.mark.distributed
+def test_ddp_frozen_kl_matches_single_process(corpus, tmp_path):
+    """The frozen-KL term against a pointer-head reference counts under DDP as on one GPU
+    (every row is eligible), and is not zero: a share of 0 on every rank would pass parity
+    only against a single-process run that dropped it too."""
+    tok = str(corpus / "tokenizer.json")
+    torso = _tiny_torso(str(tmp_path / "torso"), tok)
+    reference = _tiny_checkpoint(str(tmp_path / "ref"), tok, torso, seed=1)
+    over = dict(
+        kl_frozen_weight=0.3,
+        kl_frozen_reference=reference,
+        precompute_frozen_kl=True,
+        torso=torso,
+        epochs=1,
+    )
+    ref = _run(corpus, tmp_path / "a", 1, **over)
+    got = _run(corpus, tmp_path / "b", 3, **over)
+    for run in (ref, got):
+        kls = [float(k) for k in re.findall(r"\]   kl (\d+\.\d+)", run["stdout"])]
+        assert kls and all(k > 0 for k in kls), (len(run["ranks"]), kls)
+    _assert_same_run(ref, got, 3)
 
 
 @pytest.mark.distributed

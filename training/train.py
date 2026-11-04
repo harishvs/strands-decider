@@ -611,9 +611,7 @@ def train(cfg: TrainConfig) -> str:
         with open(os.path.join(cfg.output_dir, "train_config.json"), "w", encoding="utf-8") as fh:
             json.dump(asdict(cfg), fh, indent=2)
     if world > 1:  # each rank iterates its share of every step's rows instead
-        # 0 for kl_slots: all rows are eligible under a pointer-head reference, so no
-        # eligibility counter is needed in StepSlices.
-        train_loader = distributed.StepSlices(train_loader, 0, cfg.grad_accum, total_steps)
+        train_loader = distributed.StepSlices(train_loader, cfg.grad_accum, total_steps)
 
     refs = None
     if cfg.precompute_frozen_kl and cfg.kl_frozen_weight > 0:
