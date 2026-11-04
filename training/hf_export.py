@@ -107,6 +107,17 @@ class Base:
     teacher_route: str  # how the teacher's distributions reach the model
     trained_by: str  # the card's "Trained by" paragraph: {host} {gpu} {wall} {train}
     retrain: str  # the card's "To retrain" paragraph
+    # The base's licence, which the export inherits: "apache-2.0", or "other" with the name,
+    # link and full text the Hub and the licence ask for (LICENSE.md carries the text).
+    license: str = "apache-2.0"
+    license_name: str | None = None
+    license_link: str | None = None
+    license_file: str | None = None  # under training/licenses/, the licence's own text
+    notice: str | None = None  # the NOTICE file the base's licence asks for, if any
+    card_note: str = ""  # a paragraph of the card's introduction: what this base changes
+
+
+LICENSES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "licenses")
 
 
 QWEN = Base(
@@ -193,6 +204,49 @@ host ({gpu}): recipe wall clock {wall} s, training stage {train} s. Configs:
     )
 
 
+NEMOTRON_OMNI = Base(
+    model="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+    revision="e5e9932441de940c9a62185c870ea5bcd4cd24e2",
+    revision_note="pinned: the training config's base_revision, which the loader reads",
+    teacher="Qwen/Qwen3.5-4B",
+    tags=[
+        "strands-decider",
+        "decision-model",
+        "lora",
+        "peft",
+        "nemotron",
+        "nemotron-h",
+        "classification",
+        "calibration",
+        "typed-decisions",
+    ],
+    decoder="the Nemotron-H text decoder\n(`transformers.NemotronHForCausalLM(...).model`); it "
+    "covers attention, the Mamba `in_proj` and the shared experts, not the 128 routed experts, "
+    "their router, or the Mamba `out_proj` and `conv1d`",
+    example="",
+    teacher_route="They are training targets, directly or through a parent model that the "
+    "recipe trains first.",
+    trained_by="""Three training runs of `configs/v1/nemo-system-one-30B-A3B-nemotron-v1.yaml` (seeds 0, 1
+and 2) by `training/run_recipe.sh` under `torchrun` on a `{host}` host ({gpu}), about 1 h each,
+then `python -m training.soup` and calibration. Configs: `train_config.json`,
+`training/configs/`.""",
+    retrain="""To retrain, run the config's header commands on one host with eight 96 GB GPUs, after
+`training/recipe.sh build fetch multistep generated adequacy distill`.""",
+    license="other",
+    license_name="nvidia-open-model-agreement",
+    license_link="https://www.nvidia.com/en-us/agreements/enterprise-software/"
+    "nvidia-open-model-agreement/",
+    license_file="nvidia-open-model-agreement.txt",
+    notice="Licensed by NVIDIA Corporation under the NVIDIA Open Model Agreement.\n",
+    card_note="""**Text only, and not the v1 recipe exactly.** The base model is multimodal; this
+checkpoint uses its text decoder alone (transformers' `nemotron_h`, without the base's Hub
+code), so it reads text only. It trains on hobson-v21's data without the v1 releases'
+12,263 code-task rows, which are not public, and its LoRA rank is 64 rather than 16. For
+comparison with the Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B)
+of 231 on JevBench at the same window.""",
+)
+
+
 BASES = {
     b.model: b
     for b in (
@@ -201,6 +255,7 @@ BASES = {
         _gemma4("E4B", "ee0ef6023621cff504d758262d4e04895a5af4a2"),
         _gemma4("12B", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"),
         _gemma4("26B-A4B", "4d7ae4984b7db7de8f8457170b3f1a419ee76d52"),
+        NEMOTRON_OMNI,
     )
 }
 # Kept for callers that named the original single base.
@@ -455,6 +510,62 @@ strands-decider code at {repo}. The full text follows the notes below.
 
 {apache}"""
 
+# A base under another licence: the adapter and head are a derivative of its weights, so they
+# carry its licence (and its full text, which such licences ask redistributors to include).
+LICENSE_TEXT_OTHER = """# License
+
+This repository holds a LoRA adapter and a readout head trained on `{base}`, not its
+weights. They are a derivative of `{base}` and are distributed under its license, the
+**{license_title}** ({license_link}), whose full text follows the notes below. {notice_note}
+The strands-decider code at {repo}, which loads and runs them, is released under the Apache
+License 2.0; its text is at the end of this file.
+
+- **Training data:** the recipe reads public Hub datasets whose Hub license tags include
+  Apache-2.0, CC-BY, CC-BY-SA, CC0-1.0, MIT, `other`, `unknown` and none: {datasets}.
+  `hotpotqa/hotpot_qa` is for evaluation only. The recipe also uses ContractNLI and MuSiQue
+  from their authors' releases, and synthetic rows that open-weight language models generated
+  and checked. The output distributions of the teacher model `{teacher}` are also training
+  targets. `data/sources.md` in the code repository lists each source with its license and
+  attribution where the repository records one. Read a source's own terms before you
+  redistribute data built from it.
+
+---
+
+{license_text}
+
+---
+
+# Apache License 2.0 (the strands-decider code)
+
+{apache}"""
+
+
+def license_title(base: Base) -> str:
+    """The base licence's name as prose: "NVIDIA Open Model Agreement"."""
+    name = base.license_name or base.license
+    return name.replace("-", " ").title().replace("Nvidia", "NVIDIA")
+
+
+def license_md(base: Base, repo_url: str) -> str:
+    """LICENSE.md for an export on `base`."""
+    common = dict(
+        base=base.model, datasets=", ".join(DATASETS), teacher=base.teacher, repo=repo_url
+    )
+    if base.license == "apache-2.0":
+        return LICENSE_TEXT.format(**common, apache=apache_license())
+    if not (base.license_name and base.license_link and base.license_file):
+        raise SystemExit(f"{base.model}: license {base.license!r} needs a name, link and text")
+    with open(os.path.join(LICENSES_DIR, base.license_file), encoding="utf-8") as fh:
+        text = fh.read().strip()
+    return LICENSE_TEXT_OTHER.format(
+        **common,
+        license_title=license_title(base),
+        license_link=base.license_link,
+        notice_note="The attribution it asks for is in `NOTICE`." if base.notice else "",
+        license_text=text,
+        apache=apache_license(),
+    )
+
 
 def apache_license() -> str:
     """The Apache-2.0 text, from the installed strands-decider distribution's LICENSE."""
@@ -522,7 +633,9 @@ def card(
         library_name="strands-decider",
         pipeline_tag="text-classification",
         tags=base.tags,
-        license="apache-2.0",
+        license=base.license,
+        license_name=base.license_name,
+        license_link=base.license_link,
         datasets=DATASETS,
         model_name=name,
         eval_results=results or None,
@@ -536,6 +649,14 @@ def card(
         f"| {k} | {v['accuracy']:.3f} | {v['n']:,} |" for k, v in headline(internal).items()
     )
     model = hub_id or "<this folder>"
+    license_sentence = (
+        "under the same\nApache-2.0 license as this model (see `LICENSE.md`)."
+        if base.license == "apache-2.0"
+        else f"under Apache-2.0. This model\nis a derivative of `{base.model}` and carries "
+        f"its license, the {license_title(base)}\n({base.license_link}): see `LICENSE.md`"
+        + (" and `NOTICE`." if base.notice else ".")
+    )
+    card_note = f"\n{base.card_note}\n" if base.card_note else ""
     # The title is the public name: the Hub repo's, or the export's. The run id stays in
     # the run records.
     title = (hub_id.rsplit("/", 1)[-1] if hub_id else name) + (
@@ -556,9 +677,8 @@ evaluations, and the rote decisions of a hybrid agent that leaves the hard ones 
 This repository holds one trained checkpoint: a LoRA adapter on `{base.model}` plus a
 small readout head that scores the options of a typed question (`noul`, a yes/no question;
 `choice`, one of N options; `score`, a level on an ordered scale). The code, the training
-recipe, the data inventory and the evaluations are at {repo_url}, under the same
-Apache-2.0 license as this model (see `LICENSE.md`).
-
+recipe, the data inventory and the evaluations are at {repo_url}, {license_sentence}
+{card_note}
 ## Use
 
 ```bash
@@ -652,7 +772,7 @@ and the reproduction contract.
 
 ## Provenance
 
-`provenance.json`: base model and revision (inferred: the hosts did not pin one), and the
+`provenance.json`: base model and revision ({base.revision_note}), and the
 sha256 of the config, adapter, head and source pickle. `MANIFEST.sha256` lists every file;
 `python -m training.hf_export verify <folder>` checks them. The run records keep
 their timings and results; host paths, cloud identifiers and cost fields are removed.
@@ -732,6 +852,8 @@ def check(out: str) -> None:
         raise SystemExit("README.md: license 'other' needs license_name and license_link")
     if meta.get("model-index"):
         model_index_to_eval_results(meta["model-index"])
+    if BASES[meta["base_model"]].notice and not os.path.exists(os.path.join(out, "NOTICE")):
+        raise SystemExit(f"export lacks NOTICE, which {meta['base_model']}'s license asks for")
     for p in (
         "head.safetensors",
         "lora/adapter_model.safetensors",
@@ -856,15 +978,10 @@ def build(
     with open(os.path.join(out, "provenance.json"), "w") as fh:
         json.dump(prov, fh, indent=2, sort_keys=True)
     with open(os.path.join(out, "LICENSE.md"), "w") as fh:
-        fh.write(
-            LICENSE_TEXT.format(
-                base=base.model,
-                datasets=", ".join(DATASETS),
-                teacher=base.teacher,
-                repo=repo_url,
-                apache=apache_license(),
-            )
-        )
+        fh.write(license_md(base, repo_url))
+    if base.notice:
+        with open(os.path.join(out, "NOTICE"), "w") as fh:
+            fh.write(base.notice)
     with open(os.path.join(out, "README.md"), "w") as fh:
         fh.write(card(name, run_id, role, prov, arms, internal, repo_url, hub_id, base))
     check(out)

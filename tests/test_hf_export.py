@@ -707,3 +707,52 @@ def test_an_unknown_base_is_refused(tmp_path):
         SystemExit, match=re.escape("describes Qwen/Qwen3.5-2B-Base, google/gemma-4-E2B-it")
     ):
         _export(tmp_path, ckpt, tmp_path / "out")
+
+
+def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path):
+    """A base under another licence: the card says `license: other` with its name and link,
+    LICENSE.md holds the agreement's full text and the code's Apache text, NOTICE holds the
+    attribution the agreement asks for, and an export without NOTICE fails the check."""
+    ckpt = tmp_path / "ckpt"
+    _ckpt(str(ckpt))
+    cfg = json.load(open(ckpt / "hobson_config.json"))
+    base = hf_export.NEMOTRON_OMNI
+    cfg["base_model"] = base.model
+    json.dump(cfg, open(ckpt / "hobson_config.json", "w"), indent=2)
+    stage = tmp_path / "stage"
+    os.makedirs(stage)
+    hf_export.build(
+        str(ckpt),
+        str(stage),
+        str(tmp_path / "run"),
+        None,
+        [],
+        [],
+        "n",
+        "r",
+        "final",
+        hub_id="org/nemo",
+        example="Output:\n\n```\nx\n```\n",
+    )
+    from huggingface_hub import metadata_load
+
+    meta = metadata_load(str(stage / "README.md"))
+    assert meta["license"] == "other" and meta["license_name"] == "nvidia-open-model-agreement"
+    assert meta["license_link"] == base.license_link and "nemotron" in meta["tags"]
+    readme, licence = (stage / "README.md").read_text(), (stage / "LICENSE.md").read_text()
+    assert "same\nApache-2.0 license as this model" not in readme
+    assert "NVIDIA Open Model Agreement" in readme and "Text only" in readme
+    assert "not the 128 routed experts" in readme and base.revision_note in readme
+    assert "{" not in readme.split("## Training")[1]
+    assert "derivative of `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`" in licence
+    assert "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION" in licence
+    assert "End of terms and conditions" in licence and "Version 2.0, January 2004" in licence
+    assert (stage / "NOTICE").read_text() == (
+        "Licensed by NVIDIA Corporation under the NVIDIA Open Model Agreement.\n"
+    )
+    prov = json.load(open(stage / "provenance.json"))
+    assert prov["base_model_revision"] == base.revision
+    hf_export.verify(str(stage))
+    os.remove(stage / "NOTICE")
+    with pytest.raises(SystemExit, match="lacks NOTICE"):
+        hf_export.check(str(stage))
