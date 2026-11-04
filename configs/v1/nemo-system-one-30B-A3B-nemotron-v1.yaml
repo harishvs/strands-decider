@@ -29,12 +29,22 @@
 #                                 Mamba out_proj or conv1d (the training kernel reads their
 #                                 weights directly, so LoRA there never trains), and not the
 #                                 128 routed experts (3-D tensors, as in the 26B-A4B)
+#   lora_r 64, lora_alpha 128     four times the 26B-A4B's rank, the same alpha/r. This torso
+#                                 has attention in 6 of 52 layers and its experts and Mamba
+#                                 out_proj stay frozen, so r=16 reaches little of it. Seed 0,
+#                                 r=16 against r=64 (2026-11-04): validation accuracy 0.855
+#                                 against 0.885, held-out evals +1 to +4 points, JevBench 180
+#                                 against 181. force_bos true was no better (head-only probe:
+#                                 JevBench 142 against 143, validation 0.730 against 0.763)
 #   train_files                   without data/code_v27.jsonl (above)
 #   output_dir                    this recipe's name
 #   the retired keys num_slots, head_type and head_init are left out
 #
 # Memory, 8x RTX PRO 6000 (96 GB): the torso is 62.5 GB per rank; one forward and backward of
-# 8 rows x 4,096 tokens peaks at 80.8 GB, and no training row exceeds 2,997 tokens.
+# 8 rows x 4,096 tokens peaks at 80.8 GB, and no training row exceeds 2,997 tokens. A run
+# peaks at 64.4 GiB per rank and takes about 1 h (3,738 steps at 1.15 step/s).
+# The release is a soup of seeds 0, 1 and 2 of this config (the three differ only in `seed`),
+# calibrated after the soup, as for v1.
 #
 # Run (8 GPUs, from the repository root; checkpoints/ and data/raw may be links to fast disk):
 #   training/recipe.sh build fetch multistep generated adequacy distill
@@ -64,8 +74,8 @@ max_length: 4096
 force_bos: false        # the tokenizer adds no <s>, and the chat template adds none either
 
 use_lora: true
-lora_r: 16
-lora_alpha: 32
+lora_r: 64
+lora_alpha: 128
 lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "in_proj",
                "shared_experts.up_proj", "shared_experts.down_proj"]
 freeze_torso: false     # true = head-only training (much weaker, but very cheap)
