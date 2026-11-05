@@ -37,3 +37,6 @@ dist/
 
 # Local inference benchmark environments and generated runs
 /benchmark/environments/
+
+# Local planning notes (requirements, design, todo, worklog)
+tasks/
