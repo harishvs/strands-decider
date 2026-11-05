@@ -114,7 +114,7 @@ class Base:
     license_link: str | None = None
     license_file: str | None = None  # under training/licenses/, the licence's own text
     notice: str | None = None  # the NOTICE file the base's licence asks for, if any
-    card_note: str = ""  # a paragraph of the card's introduction: what this base changes
+    card_note: str = ""  # the card's introduction for this base: {repo_url}, {install_ref} filled
     # The card's "Use" section: the install commands ({repo_url} and {install_ref} filled) and
     # the paragraph after them. The defaults fit a base the released package loads.
     install: str = "pip install strands-decider"
@@ -247,7 +247,13 @@ then `python -m training.soup` and calibration. Configs: `train_config.json`,
     "nvidia-open-model-agreement/",
     license_file="nvidia-open-model-agreement.txt",
     notice="Licensed by NVIDIA Corporation under the NVIDIA Open Model Agreement.\n",
-    card_note="""**Text only, and not the v1 recipe exactly.** The base model is multimodal; this
+    card_note="""**The code is on a branch, not `main`.** The code that trained this model and loads it is the
+tag [`{install_ref}`]({repo_url}/tree/{install_ref}) on branch
+[`nemotron-30b-a3b`]({repo_url}/tree/nemotron-30b-a3b) of {repo_url}; the repository's `main`
+branch, and every strands-decider release, cannot load this base yet. The training config is
+[`configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml`]({repo_url}/blob/{install_ref}/configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml).
+
+**Text only, and not the v1 recipe exactly.** The base model is multimodal; this
 checkpoint uses its text decoder alone (transformers' `nemotron_h`, without the base's Hub
 code), so it reads text only. It trains on hobson-v21's data without the v1 releases'
 12,263 code-task rows, which are not public, and each of its three runs has LoRA rank 64
@@ -678,7 +684,11 @@ def card(
         f"its license, the {license_title(base)}\n({base.license_link}): see `LICENSE.md`"
         + (" and `NOTICE`." if base.notice else ".")
     )
-    card_note = f"\n{base.card_note}\n" if base.card_note else ""
+    card_note = (
+        "\n" + base.card_note.format(repo_url=repo_url, install_ref=base.install_ref) + "\n"
+        if base.card_note
+        else ""
+    )
     install = base.install.format(repo_url=repo_url, install_ref=base.install_ref)
     # The title is the public name: the Hub repo's, or the export's. The run id stays in
     # the run records.

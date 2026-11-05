@@ -748,6 +748,9 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     assert f"git+{hf_export.REPO_URL}@{base.install_ref}" in use and "mamba_ssm-" in use
     assert "`mps`" not in use and "80 GB GPU" in use
     assert "pip install" not in readme.split("## Use")[0]  # one install block, in Use
+    intro = readme.split("## Use")[0]
+    assert "not `main`" in intro and f"{hf_export.REPO_URL}/tree/{base.install_ref}" in intro
+    assert f"{hf_export.REPO_URL}/tree/nemotron-30b-a3b" in intro
     assert "{" not in readme.split("## Training")[1]
     assert "derivative of `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`" in licence
     assert "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION" in licence
