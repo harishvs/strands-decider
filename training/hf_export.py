@@ -624,6 +624,7 @@ def card(
     repo_url: str = REPO_URL,
     hub_id: str | None = None,
     base: Base = QWEN,
+    results_note: str | None = None,
 ) -> str:
     from huggingface_hub import EvalResult, ModelCardData
 
@@ -753,7 +754,7 @@ In Python, `strands_decider.modeling.StrandsDeciderModel.load("{model}")`. The a
 | internal set | accuracy | n |
 | --- | --- | --- |
 {ints or "| (none recorded) | | |"}
-
+{f"{chr(10)}{results_note.strip()}{chr(10)}" if results_note else ""}
 JevBench is the external benchmark (231 public tasks); the internal sets are this recipe's
 held-out short tasks, multi-step documents and answer-adequacy judgements.
 `evaluation/README.md` in the code repository describes each set, and its results pages
@@ -930,6 +931,8 @@ def build(
     hub_id: str | None = None,
     redact: Sequence[str] = (),
     example: str | None = None,
+    results_note: str | None = None,
+    extra_evals: Sequence[str] = (),
 ) -> dict:
     cfg_path = config_path(ckpt)
     missing = [p for p in REQUIRED if not os.path.exists(os.path.join(ckpt, p))]
@@ -997,6 +1000,10 @@ def build(
         for p in files(d):
             if keep(p):
                 _record(os.path.join(d, p), os.path.join(out, "eval/internal", p), redact)
+    for d in extra_evals:
+        dest = os.path.join(out, "eval", os.path.basename(os.path.normpath(d)))
+        for p in files(d):
+            _record(os.path.join(d, p), os.path.join(dest, p), redact)
     summary = {
         "name": name,
         "run_id": run_id,
@@ -1015,7 +1022,9 @@ def build(
         with open(os.path.join(out, "NOTICE"), "w") as fh:
             fh.write(base.notice)
     with open(os.path.join(out, "README.md"), "w") as fh:
-        fh.write(card(name, run_id, role, prov, arms, internal, repo_url, hub_id, base))
+        fh.write(
+            card(name, run_id, role, prov, arms, internal, repo_url, hub_id, base, results_note)
+        )
     check(out)
     with open(os.path.join(out, "MANIFEST.sha256"), "w") as fh:
         fh.write(manifest(out))
@@ -1268,6 +1277,19 @@ def main(argv: list[str] | None = None) -> None:
         help="markdown for the card's `strands-decider ask` output: required for a "
         "base other than Qwen3.5-2B-Base, whose v19 example is built in",
     )
+    ex.add_argument(
+        "--results-note",
+        metavar="FILE",
+        help="markdown the card's Results section adds after its tables (another scoring "
+        "of the same runs, say)",
+    )
+    ex.add_argument(
+        "--extra-eval",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="a directory of further evaluation records, copied to eval/<its name>/ (repeatable)",
+    )
     ve = sub.add_parser("verify")
     ve.add_argument("path")
     ix = sub.add_parser("index", help="write INDEX.json and INDEX.md for every export under ROOT")
@@ -1326,6 +1348,8 @@ def main(argv: list[str] | None = None) -> None:
             a.hub_id,
             a.redact,
             open(a.example).read() if a.example else None,
+            open(a.results_note).read() if a.results_note else None,
+            [_local(d, tmp, f"extra{i}") for i, d in enumerate(a.extra_eval)],
         )
         state = publish(stage, a.out, a.replace)
     jev = (

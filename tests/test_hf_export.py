@@ -719,6 +719,9 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     base = hf_export.NEMOTRON_OMNI
     cfg["base_model"] = base.model
     json.dump(cfg, open(ckpt / "hobson_config.json", "w"), indent=2)
+    extra = tmp_path / "jevbench-v1.5-open"
+    os.makedirs(extra)
+    (extra / "scores.json").write_text('{"I_open": 1.0}\n')
     stage = tmp_path / "stage"
     os.makedirs(stage)
     hf_export.build(
@@ -733,6 +736,8 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
         "final",
         hub_id="org/nemo",
         example="Output:\n\n```\nx\n```\n",
+        results_note="### Another scoring\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+        extra_evals=[str(extra)],
     )
     from huggingface_hub import metadata_load
 
@@ -760,6 +765,11 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     )
     prov = json.load(open(stage / "provenance.json"))
     assert prov["base_model_revision"] == base.revision
+    results = readme.split("## Results")[1].split("## Limitations")[0]
+    assert "### Another scoring" in results and "| 1 | 2 |" in results
+    assert (
+        stage / "eval" / "jevbench-v1.5-open" / "scores.json"
+    ).read_text() == '{"I_open": 1.0}\n'
     hf_export.verify(str(stage))
     os.remove(stage / "NOTICE")
     with pytest.raises(SystemExit, match="lacks NOTICE"):
