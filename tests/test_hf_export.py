@@ -754,6 +754,10 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     assert "`mps`" not in use and "80 GB GPU" in use
     assert "pip install" not in readme.split("## Use")[0]  # one install block, in Use
     intro = readme.split("## Use")[0]
+    assert "Strands decider is a small" not in intro  # its own opening, not the 2B family's
+    assert (
+        "nemo is a decision model for agentic AI, trained and served with strands-decider" in intro
+    )
     assert "not `main`" in intro and f"{hf_export.REPO_URL}/tree/{base.install_ref}" in intro
     assert f"{hf_export.REPO_URL}/tree/nemotron-30b-a3b" in intro
     assert "{" not in readme.split("## Training")[1]

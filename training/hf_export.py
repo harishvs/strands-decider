@@ -117,6 +117,7 @@ class Base:
     card_note: str = ""  # the card's introduction for this base: {repo_url}, {install_ref} filled
     # The card's "Use" section: the install commands ({repo_url} and {install_ref} filled) and
     # the paragraph after them. The defaults fit a base the released package loads.
+    intro: str = ""  # the card's opening paragraph ({title} filled); empty: INTRO
     install: str = "pip install strands-decider"
     install_ref: str = ""  # the code tag `install` names, for a base no release loads yet
     use_note: str = (
@@ -125,6 +126,13 @@ class Base:
         "first use."
     )
 
+
+# The card's opening paragraph for a strands-decider release; a base may give its own (Base.intro).
+INTRO = """Strands decider is a small, fast decision model for agentic AI. Unlike an LLM, which can
+generate arbitrary text, a decision model picks between sets of options and rates things on
+a scale, and every answer carries a calibrated confidence. It fits the decisions inside an
+agentic workflow: model routing, tool selection, argument checking, triage, guardrails,
+evaluations, and the rote decisions of a hybrid agent that leaves the hard ones to an LLM."""
 
 LICENSES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "licenses")
 
@@ -267,6 +275,13 @@ pip install "strands-decider @ git+{repo_url}@{install_ref}"
 pip install https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \\
   https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl""",
     install_ref="swiftpick-30B-A3B-v1",
+    intro="""{title} is a decision model for agentic AI, trained and served with strands-decider.
+Unlike an LLM, which can generate arbitrary text, a decision model picks between sets of
+options and rates things on a scale, and every answer carries a calibrated confidence. It
+fits the decisions inside an agentic workflow: model routing, tool selection, argument
+checking, triage, guardrails, evaluations, and the rote decisions of a hybrid agent that
+leaves the hard ones to an LLM. It reads its inputs in one forward pass of a 31B-parameter
+mixture-of-experts decoder that activates about 3B parameters per token.""",
     use_note="""No strands-decider release loads this base yet, so the commands above install the tagged
 code, and the Mamba kernels it needs on a CUDA host (without them, loading refuses).
 Then ask one or more questions about a state on a GPU: the torso is 31B parameters,
@@ -696,17 +711,14 @@ def card(
     title = (hub_id.rsplit("/", 1)[-1] if hub_id else name) + (
         " (parent)" if role == "parent" else ""
     )
+    intro = base.intro.format(title=title) if base.intro else INTRO
     return f"""---
 {data.to_yaml()}
 ---
 
 # {title}
 
-Strands decider is a small, fast decision model for agentic AI. Unlike an LLM, which can
-generate arbitrary text, a decision model picks between sets of options and rates things on
-a scale, and every answer carries a calibrated confidence. It fits the decisions inside an
-agentic workflow: model routing, tool selection, argument checking, triage, guardrails,
-evaluations, and the rote decisions of a hybrid agent that leaves the hard ones to an LLM.
+{intro}
 
 This repository holds one trained checkpoint: a LoRA adapter on `{base.model}` plus a
 small readout head that scores the options of a typed question (`noul`, a yes/no question;
