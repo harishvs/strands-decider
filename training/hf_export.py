@@ -114,8 +114,16 @@ class Base:
     license_link: str | None = None
     license_file: str | None = None  # under training/licenses/, the licence's own text
     notice: str | None = None  # the NOTICE file the base's licence asks for, if any
-    card_note: str = ""  # paragraphs of the card's introduction: {repo_url}, {install_ref} filled
-    install_ref: str = ""  # the code tag card_note's install line names
+    card_note: str = ""  # a paragraph of the card's introduction: what this base changes
+    # The card's "Use" section: the install commands ({repo_url} and {install_ref} filled) and
+    # the paragraph after them. The defaults fit a base the released package loads.
+    install: str = "pip install strands-decider"
+    install_ref: str = ""  # the code tag `install` names, for a base no release loads yet
+    use_note: str = (
+        "Ask one or more questions about a state. Pass `--device cuda`, `mps` or `cpu`; without "
+        "it,\nthe best available device is used. The base weights download from the Hub at "
+        "first use."
+    )
 
 
 LICENSES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "licenses")
@@ -245,22 +253,19 @@ code), so it reads text only. It trains on hobson-v21's data without the v1 rele
 12,263 code-task rows, which are not public, and each of its three runs has LoRA rank 64
 rather than 16 (the soup's adapter holds the three at rank 192). For comparison with the
 Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B) of 231 on JevBench
-at the same window.
-
-**Install from the code repository.** No strands-decider release loads this base yet:
-install the tagged code, and on a CUDA host the Mamba kernels (without them, loading
-refuses; on CPU the slow PyTorch path runs). The torso is 31B parameters, 62.5 GB in
-bfloat16: one 80 GB GPU, or `serve --device-map auto` across several.
-
-```bash
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
+at the same window.""",
+    install="""pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
 pip install "strands-decider @ git+{repo_url}@{install_ref}"
 # The Mamba kernels as prebuilt wheels for that Python 3.12 / torch 2.10 / CUDA 13 build; the
 # two projects' GitHub releases hold the other builds. A source build needs the CUDA toolkit.
 pip install https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \\
-  https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
-```""",
+  https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl""",
     install_ref="swiftpick-30B-A3B-v1",
+    use_note="""No strands-decider release loads this base yet, so the commands above install the tagged
+code, and the Mamba kernels it needs on a CUDA host (without them, loading refuses).
+Then ask one or more questions about a state on a GPU: the torso is 31B parameters,
+62.5 GB in bfloat16, so it needs one 80 GB GPU, or `serve --device-map auto` across
+several. The 62.5 GB of base weights download from the Hub at first use.""",
 )
 
 
@@ -673,11 +678,8 @@ def card(
         f"its license, the {license_title(base)}\n({base.license_link}): see `LICENSE.md`"
         + (" and `NOTICE`." if base.notice else ".")
     )
-    card_note = (
-        "\n" + base.card_note.format(repo_url=repo_url, install_ref=base.install_ref) + "\n"
-        if base.card_note
-        else ""
-    )
+    card_note = f"\n{base.card_note}\n" if base.card_note else ""
+    install = base.install.format(repo_url=repo_url, install_ref=base.install_ref)
     # The title is the public name: the Hub repo's, or the export's. The run id stays in
     # the run records.
     title = (hub_id.rsplit("/", 1)[-1] if hub_id else name) + (
@@ -703,11 +705,10 @@ recipe, the data inventory and the evaluations are at {repo_url}, {license_sente
 ## Use
 
 ```bash
-pip install strands-decider
+{install}
 ```
 
-Ask one or more questions about a state. Pass `--device cuda`, `mps` or `cpu`; without it,
-the best available device is used. The base weights download from the Hub at first use.
+{base.use_note}
 
 ```bash
 strands-decider ask {model} \\
