@@ -114,7 +114,8 @@ class Base:
     license_link: str | None = None
     license_file: str | None = None  # under training/licenses/, the licence's own text
     notice: str | None = None  # the NOTICE file the base's licence asks for, if any
-    card_note: str = ""  # a paragraph of the card's introduction: what this base changes
+    card_note: str = ""  # paragraphs of the card's introduction: {repo_url}, {install_ref} filled
+    install_ref: str = ""  # the code tag card_note's install line names
 
 
 LICENSES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "licenses")
@@ -226,7 +227,7 @@ NEMOTRON_OMNI = Base(
     example="",
     teacher_route="They are training targets, directly or through a parent model that the "
     "recipe trains first.",
-    trained_by="""Three training runs of `configs/v1/nemo-system-one-30B-A3B-nemotron-v1.yaml` (seeds 0, 1
+    trained_by="""Three training runs of `configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml` (seeds 0, 1
 and 2) by `training/run_recipe.sh` under `torchrun` on a `{host}` host ({gpu}), about 1 h each,
 then `python -m training.soup` and calibration. Configs: `train_config.json`,
 `training/configs/`.""",
@@ -241,9 +242,21 @@ then `python -m training.soup` and calibration. Configs: `train_config.json`,
     card_note="""**Text only, and not the v1 recipe exactly.** The base model is multimodal; this
 checkpoint uses its text decoder alone (transformers' `nemotron_h`, without the base's Hub
 code), so it reads text only. It trains on hobson-v21's data without the v1 releases'
-12,263 code-task rows, which are not public, and its LoRA rank is 64 rather than 16. For
-comparison with the Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B)
-of 231 on JevBench at the same window.""",
+12,263 code-task rows, which are not public, and each of its three runs has LoRA rank 64
+rather than 16 (the soup's adapter holds the three at rank 192). For comparison with the
+Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B) of 231 on JevBench
+at the same window.
+
+**Install from the code repository.** No strands-decider release loads this base yet:
+install the tagged code, and on a CUDA host the Mamba kernels (without them, loading
+refuses; on CPU the slow PyTorch path runs). The torso is 31B parameters, 62.5 GB in
+bfloat16: one 80 GB GPU, or `serve --device-map auto` across several.
+
+```bash
+pip install "strands-decider @ git+{repo_url}@{install_ref}"
+pip install --no-build-isolation mamba-ssm causal-conv1d   # fetches the wheel for your torch/CUDA
+```""",
+    install_ref="swiftpick-30B-A3B-v1",
 )
 
 
@@ -656,7 +669,11 @@ def card(
         f"its license, the {license_title(base)}\n({base.license_link}): see `LICENSE.md`"
         + (" and `NOTICE`." if base.notice else ".")
     )
-    card_note = f"\n{base.card_note}\n" if base.card_note else ""
+    card_note = (
+        "\n" + base.card_note.format(repo_url=repo_url, install_ref=base.install_ref) + "\n"
+        if base.card_note
+        else ""
+    )
     # The title is the public name: the Hub repo's, or the export's. The run id stays in
     # the run records.
     title = (hub_id.rsplit("/", 1)[-1] if hub_id else name) + (

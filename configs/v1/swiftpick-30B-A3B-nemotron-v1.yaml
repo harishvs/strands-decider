@@ -1,4 +1,6 @@
-# nemo-system-one-30B-A3B-nemotron-v1: the v1 recipe on NVIDIA Nemotron-3-Nano-Omni-30B-A3B, seed 0.
+# swiftpick-30B-A3B-nemotron-v1: the training config of swiftpick-30B-A3B, seed 0: the v1 recipe on
+# nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16 (the base; NVIDIA's names appear here only
+# to say what the model is trained from).
 # Derived from configs/v1/strands-decider-26B-A4B-gemma4-v1-2610.yaml (the repository's other
 # mixture-of-experts torso); the differences are listed below.
 #
@@ -49,11 +51,15 @@
 # Run (8 GPUs, from the repository root; checkpoints/ and data/raw may be links to fast disk):
 #   training/recipe.sh build fetch multistep generated adequacy distill
 #   hf download StrandsAgents/strands-decider-2B-hobson-v19 --local-dir checkpoints/v19-ref
-#   NGPU=8 TRAIN_CONFIG=configs/v1/nemo-system-one-30B-A3B-nemotron-v1.yaml \
-#     CKPT=checkpoints/nemo-system-one-30B-A3B-v1-s0 training/recipe.sh train
-#   python -m training.evaluate calibrate checkpoints/nemo-system-one-30B-A3B-v1-s0 \
-#     --data data/holdout_v5_norule.jsonl
-#   CKPT=checkpoints/nemo-system-one-30B-A3B-v1-s0 training/recipe.sh eval
+#   C=configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml
+#   for s in 0 1 2; do
+#     SEED=$s NGPU=8 S3_PREFIX=none RUN_DIR=runs/swiftpick-s$s TRAIN_CONFIG=$C \
+#       CKPT=checkpoints/swiftpick-30B-A3B-s$s training/run_recipe.sh train
+#   done
+#   python -m training.soup checkpoints/swiftpick-30B-A3B-s0 checkpoints/swiftpick-30B-A3B-s1 \
+#     checkpoints/swiftpick-30B-A3B-s2 --out checkpoints/swiftpick-30B-A3B
+#   NGPU=8 S3_PREFIX=none RUN_DIR=runs/swiftpick TRAIN_CONFIG=$C CKPT=checkpoints/swiftpick-30B-A3B \
+#     training/run_recipe.sh calibrate eval
 
 train_files: ["data/train_v5.jsonl", "data/multistep_v14.jsonl", "data/generated_v16p.jsonl",
               "data/generated_v18p.jsonl", "data/adequacy_hs2.jsonl", "data/adequacy_gen.jsonl"]
@@ -96,7 +102,7 @@ group_by_length: true   # on: ~2k-token documents among ~250-token rows would ot
 ordinal_smoothing: 0.1
 reverse_score_prob: 0.5
 
-output_dir: "checkpoints/nemo-system-one-30B-A3B-v1-s0"
+output_dir: "checkpoints/swiftpick-30B-A3B-s0"
 seed: 0
 log_every: 20
 eval_every: 500
