@@ -129,7 +129,8 @@ def _function_key(info: str) -> str:
 def _read_parquet(path: str) -> list[dict[str, Any]]:
     import pyarrow.parquet as pq
 
-    return pq.read_table(path).to_pylist()
+    rows: list[dict[str, Any]] = pq.read_table(path).to_pylist()
+    return rows
 
 
 def _balanced(rows: list[tuple[str, int]], n: int, rng: random.Random) -> list[tuple[str, int]]:
