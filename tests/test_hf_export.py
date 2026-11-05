@@ -755,6 +755,11 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     assert "pip install" not in readme.split("## Use")[0]  # one install block, in Use
     intro = readme.split("## Use")[0]
     assert "Strands decider is a small" not in intro  # its own opening, not the 2B family's
+    limits = readme.split("## Limitations")[1].split("## Training data")[0]
+    assert limits.index("yes/no answers hedge") < limits.index("Questions are read less")
+    assert "behind the general points,\nfrom earlier strands-decider releases" in limits
+    assert "no parent model is trained" in readme and "strands-decider-2B-hobson-v19" in readme
+    assert "source pickle" not in readme and "hobson-v21's data" not in readme
     assert (
         "nemo is a decision model for agentic AI, trained and served with strands-decider" in intro
     )

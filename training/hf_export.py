@@ -118,6 +118,8 @@ class Base:
     # The card's "Use" section: the install commands ({repo_url} and {install_ref} filled) and
     # the paragraph after them. The defaults fit a base the released package loads.
     intro: str = ""  # the card's opening paragraph ({title} filled); empty: INTRO
+    # Limitations measured on this base, listed before the general ones (markdown bullets).
+    limitations: str = ""
     install: str = "pip install strands-decider"
     install_ref: str = ""  # the code tag `install` names, for a base no release loads yet
     use_note: str = (
@@ -241,14 +243,19 @@ NEMOTRON_OMNI = Base(
     "covers attention, the Mamba `in_proj` and the shared experts, not the 128 routed experts, "
     "their router, or the Mamba `out_proj` and `conv1d`",
     example="",
-    teacher_route="They are training targets, directly or through a parent model that the "
-    "recipe trains first.",
+    teacher_route="They are training targets through `data/teacher_v20.jsonl`, which "
+    "`recipe.sh distill` builds from\n  the committed distributions (the teacher's on the "
+    "short-task rows, v14's on the multi-step rows);\n  no parent model is trained. A "
+    "frozen-KL term (weight 0.3) also keeps the answers close to the\n  released "
+    "`StrandsAgents/strands-decider-2B-hobson-v19`.",
     trained_by="""Three training runs of `configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml` (seeds 0, 1
-and 2) by `training/run_recipe.sh` under `torchrun` on a `{host}` host ({gpu}), about 1 h each,
-then `python -m training.soup` and calibration. Configs: `train_config.json`,
-`training/configs/`.""",
-    retrain="""To retrain, run the config's header commands on one host with eight 96 GB GPUs, after
-`training/recipe.sh build fetch multistep generated adequacy distill`.""",
+and 2) by `training/run_recipe.sh` under `torchrun` on the eight GPUs of a `{host}` host
+({gpu}), about 1 h each, then `python -m training.soup` and calibration. Configs:
+`train_config.json` (seed 0's) and `training/configs/`, the runner's copies (it copies a
+parent config too; this recipe trains no parent).""",
+    retrain="""To retrain, run the config's header commands on one host with eight GPUs of 80 GB or more
+(a run peaks at 64.4 GiB per GPU), after `training/recipe.sh build fetch multistep generated
+adequacy distill` and the download of the v19 checkpoint the header names.""",
     license="other",
     license_name="nvidia-open-model-agreement",
     license_link="https://www.nvidia.com/en-us/agreements/enterprise-software/"
@@ -263,8 +270,9 @@ branch, and every strands-decider release, cannot load this base yet. The traini
 
 **Text only, and not the v1 recipe exactly.** The base model is multimodal; this
 checkpoint uses its text decoder alone (transformers' `nemotron_h`, without the base's Hub
-code), so it reads text only. It trains on hobson-v21's data without the v1 releases'
-12,263 code-task rows, which are not public, and each of its three runs has LoRA rank 64
+code), so it reads text only. It trains on the 123,339 rows of the
+`StrandsAgents/strands-decider-2B-hobson-v21` release, without the v1 releases' 12,263
+code-task rows, which are not public, and each of its three runs has LoRA rank 64
 rather than 16 (the soup's adapter holds the three at rank 192). For comparison with the
 Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B) of 231 on JevBench
 at the same window.""",
@@ -275,6 +283,17 @@ pip install "strands-decider @ git+{repo_url}@{install_ref}"
 pip install https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \\
   https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl""",
     install_ref="swiftpick-30B-A3B-v1",
+    limitations="""- **Its yes/no answers hedge.** 32 of its 74 JevBench `noul` answers put P(yes) between 0.20
+  and 0.80 (the 26B-A4B v1 release: 15). Read `noul` as a probability: a consumer that acts
+  only on confident answers, as JevBench v1.5 does, loses those.
+- **Judgement trails the Gemma 4 26B-A4B v1 release**: HelpSteer2 adequacy 0.744 against
+  0.808, BoardgameQA 0.829 against 0.869, JevBench's standard tier 65/72 against 72/72.
+- **No code-task training rows** (see above), and no held-out code evaluation for this model.
+- **It needs a CUDA GPU with about 80 GB** and the Mamba kernels, and downloads 62.5 GB of
+  base weights at first use. There is no practical CPU path: the kernels take CUDA tensors
+  only, and without them the PyTorch fallback is many times slower.
+- **The general points below were measured on earlier releases**; this model's own figures
+  are in Results.""",
     intro="""{title} is a decision model for agentic AI, trained and served with strands-decider.
 Unlike an LLM, which can generate arbitrary text, a decision model picks between sets of
 options and rates things on a scale, and every answer carries a calibrated confidence. It
@@ -712,6 +731,12 @@ def card(
         " (parent)" if role == "parent" else ""
     )
     intro = base.intro.format(title=title) if base.intro else INTRO
+    base_limitations = f"{base.limitations.strip()}\n" if base.limitations else ""
+    limits_scope = (
+        "the general points,\nfrom earlier strands-decider releases"
+        if base.limitations
+        else "each point"
+    )
     return f"""---
 {data.to_yaml()}
 ---
@@ -775,7 +800,9 @@ give the figures by version. Per-skill results and the raw reports and logs are 
 
 ## Limitations
 
-- **Questions are read less than documents.** With the state and options fixed, a changed
+{
+        base_limitations
+    }- **Questions are read less than documents.** With the state and options fixed, a changed
   question often gets the same answer. Phrase a question so the obvious reading is the
   intended one.
 - **Long, multi-step documents are the weak spot**: JevBench's hard tier scores far below
@@ -787,7 +814,7 @@ give the figures by version. Per-skill results and the raw reports and logs are 
   traffic before you trust a threshold.
 - **Trained on public datasets**, so it inherits their domains and their label noise.
 
-`evaluation/README.md`, section "Limitations", has the measured figures behind each point.
+`evaluation/README.md`, section "Limitations", has the measured figures behind {limits_scope}.
 
 ## Training data
 
@@ -818,7 +845,8 @@ and the reproduction contract.
 ## Provenance
 
 `provenance.json`: base model and revision ({base.revision_note}), and the
-sha256 of the config, adapter, head and source pickle. `MANIFEST.sha256` lists every file;
+sha256 of the config, adapter and head, and a fingerprint of the source checkpoint.
+`MANIFEST.sha256` lists every file;
 `python -m training.hf_export verify <folder>` checks them. The run records keep
 their timings and results; host paths, cloud identifiers and cost fields are removed.
 """
