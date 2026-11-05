@@ -253,8 +253,12 @@ refuses; on CPU the slow PyTorch path runs). The torso is 31B parameters, 62.5 G
 bfloat16: one 80 GB GPU, or `serve --device-map auto` across several.
 
 ```bash
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
 pip install "strands-decider @ git+{repo_url}@{install_ref}"
-pip install --no-build-isolation mamba-ssm causal-conv1d   # fetches the wheel for your torch/CUDA
+# The Mamba kernels as prebuilt wheels for that Python 3.12 / torch 2.10 / CUDA 13 build; the
+# two projects' GitHub releases hold the other builds. A source build needs the CUDA toolkit.
+pip install https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \\
+  https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 ```""",
     install_ref="swiftpick-30B-A3B-v1",
 )
