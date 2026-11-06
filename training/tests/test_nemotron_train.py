@@ -253,3 +253,26 @@ def test_nemotron_trains_reloads_and_serves(base, tmp_path):
                 assert all(abs(x[f][o] - y[f][o]) <= 2e-3 for o in x[f]), (k, f)
             elif isinstance(x[f], float):
                 assert abs(x[f] - y[f]) <= 2e-3, (k, f)
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+def test_the_mamba_kernels_run_on_the_decoders_device_not_the_current_one(base):
+    """mamba-ssm and causal-conv1d launch on the current CUDA device; a decoder on another
+    device computed wrong numbers or NaN until guard_mamba_devices (measured on the 30B)."""
+    path, rows, _ = base
+    ids = torch.randint(4, 300, (2, 48))
+    mask = torch.ones_like(ids)
+    out = []
+    for dev in ("cuda:0", "cuda:1"):
+        torso = StrandsDeciderModel._load_torso(_config(path), dev, None).eval()
+        assert all(
+            getattr(m.forward, "on_input_device", False)
+            for m in torso.modules()
+            if hasattr(m, "time_step_limit")
+        )
+        with torch.no_grad():
+            h = torso(input_ids=ids.to(dev), attention_mask=mask.to(dev)).last_hidden_state
+        out.append(h.float().cpu())
+    assert torch.cuda.current_device() == 0
+    assert torch.isfinite(out[1]).all()
+    assert torch.allclose(out[0], out[1], atol=1e-5), (out[0] - out[1]).abs().max()

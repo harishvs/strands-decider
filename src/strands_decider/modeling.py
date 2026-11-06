@@ -111,6 +111,48 @@ def require_mamba_kernels() -> None:
     warnings.warn(msg, stacklevel=2)
 
 
+def fix_mamba_time_step_limit(decoder: nn.Module) -> None:
+    """Give every Mamba mixer of a nemotron_h decoder its config's step-size limit.
+
+    transformers' nemotron_h hard-codes the limit to (time_step_min, inf), the clamp of the
+    reference PyTorch path. The checkpoint's own kernel path passes its config's
+    time_step_limit, (0, 1e30) for Nemotron-3-Nano-Omni, and small steps occur: the 1e-3
+    floor moves layer 0's output by 20% (relative L2). With the config's limit every layer
+    matches nvidia's code to 2e-5.
+    """
+    cfg: Any = decoder.config
+    limit = tuple(cfg.time_step_limit)
+    for module in decoder.modules():
+        if hasattr(module, "time_step_limit"):
+            setattr(module, "time_step_limit", limit)  # noqa: B010 (a plain attribute)
+
+
+def _on_input_device(forward: Callable[..., Any]) -> Callable[..., Any]:
+    def run(hidden_states: torch.Tensor, *args: Any, **kwargs: Any) -> Any:
+        if hidden_states.is_cuda:
+            with torch.cuda.device(hidden_states.device):
+                return forward(hidden_states, *args, **kwargs)
+        return forward(hidden_states, *args, **kwargs)
+
+    run.on_input_device = True  # type: ignore[attr-defined]
+    return run
+
+
+def guard_mamba_devices(decoder: nn.Module) -> None:
+    """Run every Mamba mixer of a nemotron_h decoder on its input's CUDA device.
+
+    The Mamba kernels (mamba-ssm's Triton ops, causal-conv1d) launch on the *current* CUDA
+    device, not on the device of the tensors they are given. A decoder on any other device
+    (`device_map="cuda:1"`, or layers split across GPUs) then computes wrong numbers or NaN,
+    silently: measured on swiftpick-30B-A3B on cuda:1 with cuda:0 current.
+    """
+    for module in decoder.modules():
+        if hasattr(module, "time_step_limit") and not getattr(
+            module.forward, "on_input_device", False
+        ):
+            module.forward = _on_input_device(module.forward)
+
+
 def serving_attn_implementation(torso_cfg: Any) -> str | None:
     """The attention a loaded checkpoint is served with when the caller names none.
 
@@ -490,15 +532,8 @@ class StrandsDeciderModel(nn.Module):
                 )
             torso = nemotron.model
             del nemotron
-            # transformers' nemotron_h hard-codes the Mamba step-size limit to
-            # (time_step_min, inf), the clamp of the reference PyTorch path. The checkpoint's
-            # own kernel path passes its config's time_step_limit, (0, 1e30) here, and
-            # small steps occur: the 1e-3 floor moves layer 0's output by 20% (relative L2).
-            # With the config's limit every layer matches nvidia's code to 2e-5 (worklog).
-            limit = tuple(torso.config.time_step_limit)
-            for module in torso.modules():
-                if hasattr(module, "time_step_limit"):
-                    module.time_step_limit = limit
+            fix_mamba_time_step_limit(torso)
+            guard_mamba_devices(torso)
         else:
             torso = AutoModel.from_pretrained(config.base_model, **kwargs)
         if config.host_embeddings:
