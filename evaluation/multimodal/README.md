@@ -8,7 +8,7 @@ with its media and again without them.
 pip install -e ".[multimodal]"   # plus the Mamba kernels, see the model card
 C=checkpoints/swiftpick-30B-A3B   # a local copy of the checkpoint
 
-# images and audio (2,963 items, ~25 min with the blind pass on one H100)
+# images and audio (2,963 items, ~25 min with the blind pass on one RTX PRO 6000 Blackwell, 96 GB)
 python evaluation/multimodal/run.py $C --out runs/mm/main --data data/mm \
   --sets naturalbench pope minds14 speech_commands
 # video (300 questions; fetches ~160 clips, 2 GB, from the dataset's zips by range)

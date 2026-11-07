@@ -105,7 +105,7 @@ preprocessing.
 ## How well it does
 
 Measured zero-shot (no media training) with the published checkpoint, through the serving
-path (`OmniEngine.evaluate`, the default limits), on one H100 in bf16, once with the media and
+path (`OmniEngine.evaluate`, the default limits), on one RTX PRO 6000 Blackwell (96 GB) in bf16, once with the media and
 once with them removed. Intervals are bootstrap 95% (NaturalBench by group, Perception Test
 by video). Lower is better for Brier and ECE.
 
