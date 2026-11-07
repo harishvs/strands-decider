@@ -158,6 +158,24 @@ def test_a_video_is_sampled_at_most_once_a_second(container, codec):
     assert idx == [0, 14, 29] and frames.shape[0] == 3
 
 
+def test_only_the_sampled_frames_are_decoded_and_they_are_the_videos_own(monkeypatch):
+    data = _video(seconds=4.0, fps=10)
+    frames, idx, _ = M.decode_video(data, LIMITS)
+    with av.open(io.BytesIO(base64.b64decode(data))) as c:
+        every = [f.to_ndarray(format="rgb24") for f in c.decode(c.streams.video[0])]
+    assert len(every) == 40 and idx == M.sample_frame_indices(40, 10.0, 16)
+    assert torch.equal(
+        frames, torch.from_numpy(np.stack([every[i] for i in idx])).permute(0, 3, 1, 2)
+    )
+
+    passes = []
+    real = M._video_pass
+    monkeypatch.setattr(M, "_video_pass", lambda raw, keep: passes.append(keep) or real(raw, keep))
+    with pytest.raises(ValueError, match="at most 2 s"):
+        M.decode_video(data, M.MediaLimits(max_video_seconds=2.0))
+    assert passes == [None]  # refused from the packet count, nothing decoded
+
+
 def test_a_long_video_keeps_at_most_max_frames_spread_evenly():
     idx = M.sample_frame_indices(n_frames=600, fps=10.0, max_frames=16)
     assert len(idx) == 16 and idx[0] == 0 and idx[-1] == 599

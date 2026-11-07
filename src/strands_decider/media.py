@@ -237,29 +237,51 @@ def video_tile(height: int, width: int) -> tuple[int, int]:
     return max(MERGE, ph - rh), max(MERGE, pw - rw)
 
 
-def decode_video(data: str, limits: MediaLimits) -> tuple[torch.Tensor, list[int], float]:
-    """(frames as uint8 (n, 3, H, W), their indices, source fps) of a base64 video."""
-    raw = decode_base64(data, "video", limits.max_video_bytes)
+def _video_pass(raw: bytes, keep: set[int] | None) -> tuple[float, int, dict[int, np.ndarray]]:
+    """One pass over a video's stream: (fps, frame count, the kept frames as RGB). With
+    keep=None the packets are only counted, not decoded."""
     container = _open(raw, VIDEO_CONTAINERS, "video")
     try:
         if not container.streams.video:
             raise ValueError("video has no video stream")
         stream = container.streams.video[0]
         fps = float(stream.average_rate or stream.base_rate or 0) or 25.0
-        frames = [f.to_ndarray(format="rgb24") for f in container.decode(stream)]
+        if keep is None:
+            return fps, sum(1 for p in container.demux(stream) if p.size), {}
+        stream.thread_type = "AUTO"
+        n, frames = 0, {}
+        for n, f in enumerate(container.decode(stream), 1):
+            if n - 1 in keep:  # only the sampled frames are converted and kept
+                frames[n - 1] = f.to_ndarray(format="rgb24")
+        return fps, n, frames
     except ValueError:
         raise
     except Exception as e:
         raise ValueError(f"video could not be decoded: {e}") from e
     finally:
         container.close()
-    if not frames:
-        raise ValueError("video has no frames")
-    if len(frames) / fps > limits.max_video_seconds:
-        raise ValueError(
-            f"video is {len(frames) / fps:.0f} s; at most {limits.max_video_seconds:.0f} s"
-        )
-    indices = sample_frame_indices(len(frames), fps, limits.max_video_frames)
+
+
+def decode_video(data: str, limits: MediaLimits) -> tuple[torch.Tensor, list[int], float]:
+    """(frames as uint8 (n, 3, H, W), their indices, source fps) of a base64 video.
+
+    The frames are counted from the demuxed packets first, so the duration is checked before
+    anything is decoded, and only the sampled frames are converted to RGB. If the decoder
+    yields a different count than the packets (rare), the indices are taken again on it."""
+    raw = decode_base64(data, "video", limits.max_video_bytes)
+    fps, n, _ = _video_pass(raw, None)
+    for _ in range(2):
+        if not n:
+            raise ValueError("video has no frames")
+        if n / fps > limits.max_video_seconds:
+            raise ValueError(f"video is {n / fps:.0f} s; at most {limits.max_video_seconds:.0f} s")
+        indices = sample_frame_indices(n, fps, limits.max_video_frames)
+        _, decoded, frames = _video_pass(raw, set(indices))
+        if decoded == n:
+            break
+        n = decoded
+    else:
+        raise ValueError("video frame count is not stable across decodes")
     picked = np.stack([frames[i] for i in indices])  # (n, H, W, 3)
     return torch.from_numpy(picked).permute(0, 3, 1, 2).contiguous(), indices, fps
 
