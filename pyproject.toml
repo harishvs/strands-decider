@@ -34,6 +34,9 @@ dependencies = [
 train = ["datasets>=2.20"]
 # Image input (`serve --vision`, `ask --image`, docs/vision.md); also needs transformers >= 5.18.
 vision = ["pillow>=10"]
+# Image, video and audio input on a Nemotron-3-Nano-Omni base (docs/multimodal.md): PyAV
+# decodes video and audio (its wheels bundle FFmpeg).
+multimodal = ["pillow>=10", "av>=14"]
 # `--device mlx`: the torso on Apple silicon's GPU through mlx-lm (Python 3.11+;
 # src/strands_decider/mlx_engine.py).
 # mlx-lm is capped at the minor version tested: the backend uses its Qwen3.5 module layout and
