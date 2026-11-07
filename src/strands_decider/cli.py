@@ -72,7 +72,9 @@ def serve_cmd(
     vision: bool = typer.Option(
         False,
         "--vision",
-        help="Keep Qwen3.5's vision tower so requests may carry `images` (docs/vision.md).",
+        "--multimodal",
+        help="Keep the base's media encoders: requests may carry `images` (Qwen3.5), or "
+        "`images`, `videos` and `audio` (Nemotron Omni) (docs/multimodal.md).",
     ),
     max_batch: int = typer.Option(
         32,
@@ -123,6 +125,14 @@ def ask_cmd(
     image: list[str] | None = typer.Option(
         None, "--image", help="Image file, part of the state; repeat. Loads the vision tower."
     ),
+    video: list[str] | None = typer.Option(
+        None, "--video", help="Video file (mp4, mov, mkv, webm), part of the state; Omni bases."
+    ),
+    audio: list[str] | None = typer.Option(
+        None,
+        "--audio",
+        help="Audio file (wav, flac, mp3, ogg, m4a), part of the state; repeat; Omni bases.",
+    ),
     noul: list[str] | None = typer.Option(None, "--noul", help="Yes/no question; repeat."),
     choice: list[str] | None = typer.Option(
         None, "--choice", help="'question?=opt1,opt2,opt3'; repeat."
@@ -162,18 +172,29 @@ def ask_cmd(
         raise typer.BadParameter("ask at least one --noul / --choice / --score question")
 
     selected_device = resolve_device(device)
-    if image:
+    if image or video or audio:
         import base64
 
-        from .vision import load_vision_engine
+        from .omni import OmniEngine, load_media_engine
 
-        encoded = []
-        for path in image:
-            with open(path, "rb") as fh:
-                encoded.append(base64.b64encode(fh.read()).decode("ascii"))
-        response = load_vision_engine(checkpoint, EngineConfig(device=selected_device)).ask_images(
-            state, questions, encoded
-        )
+        def encoded(paths: list[str] | None) -> list[str]:
+            out = []
+            for path in paths or []:
+                with open(path, "rb") as fh:
+                    out.append(base64.b64encode(fh.read()).decode("ascii"))
+            return out
+
+        engine = load_media_engine(checkpoint, EngineConfig(device=selected_device))
+        if isinstance(engine, OmniEngine):
+            response = engine.ask_media(
+                state, questions, encoded(image), encoded(video), encoded(audio)
+            )
+        elif video or audio:
+            raise typer.BadParameter(
+                "this checkpoint's base reads images only, not --video or --audio"
+            )
+        else:
+            response = engine.ask_images(state, questions, encoded(image))  # type: ignore[attr-defined]
     else:
         response = load_engine(checkpoint, device=selected_device).ask(state, questions)
 

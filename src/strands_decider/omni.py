@@ -20,7 +20,7 @@ from __future__ import annotations
 import copy
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, cast
 
 import torch
@@ -444,3 +444,32 @@ def load_omni_engine(
     cfg = config or OmniEngineConfig()
     model = OmniDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
     return OmniEngine(model, cfg)
+
+
+def load_media_engine(
+    checkpoint: str, config: EngineConfig | None = None, attn_implementation: str | None = None
+) -> SystemOneEngine:
+    """The engine that reads a checkpoint's media: OmniEngine (images, video, audio) on a
+    Nemotron Omni base, else the Qwen3.5 vision engine (images)."""
+    path = checkpoint_dir(checkpoint)
+    cfg = StrandsDeciderConfig.from_json(config_path(path))
+    engine_cfg = config or EngineConfig()
+    if is_omni_base(cfg.base_model, checkpoint_base_revision(path, cfg)):
+        omni_cfg = (
+            engine_cfg
+            if isinstance(engine_cfg, OmniEngineConfig)
+            else OmniEngineConfig(**asdict(engine_cfg))
+        )
+        return load_omni_engine(path, omni_cfg, attn_implementation)
+    from .vision import load_vision_engine
+
+    return load_vision_engine(path, engine_cfg, attn_implementation=attn_implementation)
+
+
+def modalities(engine: SystemOneEngine) -> list[str]:
+    """What an engine reads, for /health."""
+    if isinstance(engine, OmniEngine):
+        return ["text", "image", "video", "audio"]
+    from .vision import VisionEngine
+
+    return ["text", "image"] if isinstance(engine, VisionEngine) else ["text"]

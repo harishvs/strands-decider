@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -85,6 +86,46 @@ def _warm_up_image(engine: SystemOneEngine, state: str, question: Question) -> N
     Image.new("RGB", (64, 64), (128, 128, 128)).save(buf, "PNG")
     image = base64.b64encode(buf.getvalue()).decode()
     engine.evaluate(SystemOneRequest(state=state, questions={"q": question}, images=[image]))
+    from .omni import OmniEngine
+
+    if isinstance(engine, OmniEngine):  # its video and audio encoders initialise on first use
+        video, audio = _warm_up_clips()
+        engine.evaluate(SystemOneRequest(state=state, questions={"q": question}, videos=[video]))
+        engine.evaluate(SystemOneRequest(state=state, questions={"q": question}, audio=[audio]))
+
+
+def _warm_up_clips() -> tuple[str, str]:
+    """A two-frame grey MP4 and one second of silence, base64-encoded."""
+    import base64
+    import io
+
+    import av
+    import numpy as np
+
+    video = io.BytesIO()
+    with av.open(video, mode="w", format="mp4") as out:
+        stream = out.add_stream("mpeg4", rate=2)
+        stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
+        for _ in range(2):
+            picture = av.VideoFrame.from_ndarray(
+                np.full((64, 64, 3), 128, np.uint8), format="rgb24"
+            )
+            for packet in stream.encode(picture):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    audio = io.BytesIO()
+    with av.open(audio, mode="w", format="wav") as out:
+        stream = out.add_stream("pcm_s16le", rate=16000, layout="mono")
+        frame = av.AudioFrame.from_ndarray(
+            np.zeros((1, 16000), np.int16), format="s16", layout="mono"
+        )
+        frame.sample_rate = 16000
+        for packet in stream.encode(frame):
+            out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    return base64.b64encode(video.getvalue()).decode(), base64.b64encode(audio.getvalue()).decode()
 
 
 def create_app(
@@ -136,9 +177,10 @@ def create_app(
     if vision:
         if device == "mlx":
             raise ValueError("--vision runs on torch devices (cuda, mps, cpu), not mlx")
-        from .vision import load_vision_engine
+        from .omni import load_media_engine
 
-        _engine = load_vision_engine(checkpoint, config, attn_implementation=attn_implementation)
+        # A Nemotron Omni base reads images, video and audio; a Qwen3.5 base images.
+        _engine = load_media_engine(checkpoint, config, attn_implementation=attn_implementation)
     elif device == "mlx":
         _engine = load_mlx(checkpoint, config)
     else:
@@ -150,6 +192,8 @@ def create_app(
     # serve() listens only after create_app returns, so /health (/ping) fails until this is done.
     if warmup:
         warm_up(_engine, max_batch, vision=vision)
+
+    from .omni import OmniEngine, modalities
 
     # SageMaker and AgentCore Runtime call /ping and /invocations; each is the same
     # handler as the path above it.
@@ -167,6 +211,8 @@ def create_app(
             "device": eng.cfg.device,
             "prefix_cache": eng.cfg.use_prefix_cache,
             "vision": vision,
+            "modalities": modalities(eng),
+            **({"media_limits": asdict(eng.ocfg.limits)} if isinstance(eng, OmniEngine) else {}),
         }
 
     guard: contextlib.AbstractContextManager

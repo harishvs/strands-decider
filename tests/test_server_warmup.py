@@ -87,11 +87,12 @@ def test_warmup_runs_on_a_real_engine():
 
 
 def test_vision_warmup_sends_an_image_request(monkeypatch):
-    from strands_decider import vision
+    from strands_decider import omni
 
     recorder = _RecordingEngine()
     monkeypatch.setattr(server, "_engine", None)
-    monkeypatch.setattr(vision, "load_vision_engine", lambda *a, **k: recorder)
+    # --vision loads through omni.load_media_engine, which picks the base's media engine
+    monkeypatch.setattr(omni, "load_media_engine", lambda *a, **k: recorder)
     server.create_app("checkpoints/test", device="cuda", vision=True, max_batch=5)
 
     with_images = [r for r in recorder.requests if r.images]

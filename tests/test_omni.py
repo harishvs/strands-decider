@@ -502,3 +502,65 @@ def test_images_and_a_video_together_are_refused(engines):
         omni.evaluate(
             SystemOneRequest(state="x", questions=QUESTIONS, images=[_png()], videos=[_mp4()])
         )
+
+
+def test_the_server_serves_every_modality_and_reports_them(omni_base):
+    from fastapi.testclient import TestClient
+
+    from strands_decider import server
+
+    _, ckpt, _, _ = omni_base
+    app = TestClient(server.create_app(str(ckpt), device=DEVICE, vision=True, max_batch=2))
+    health = app.get("/health").json()
+    assert health["vision"] is True and health["modalities"] == ["text", "image", "video", "audio"]
+    assert (
+        health["media_limits"]["max_images"] == 4
+        and health["media_limits"]["max_video_frames"] == 16
+    )
+    q = {"q": {"type": "noul", "instructions": "Is it busy?"}}
+    for media in ({"images": [_png()]}, {"videos": [_mp4()]}, {"audio": [_wav()]}, {}):
+        r = app.post("/v1/systemone", json={"state": "Look.", "questions": q, **media})
+        assert r.status_code == 200, (media.keys(), r.text)
+        assert 0.0 <= r.json()["answers"]["q"]["noul"] <= 1.0
+    both = {"state": "x", "questions": q, "images": [_png()], "videos": [_mp4()]}
+    assert app.post("/v1/systemone", json=both).status_code == 422
+    sneaky = {"state": "a <so_embedding> here", "questions": q, "audio": [_wav()]}
+    assert app.post("/v1/systemone", json=sneaky).status_code == 422
+    text = TestClient(server.create_app(str(ckpt), device=DEVICE, warmup=False))
+    assert text.get("/health").json()["modalities"] == ["text"]
+    r = text.post("/v1/systemone", json={"state": "x", "questions": q, "audio": [_wav()]})
+    assert r.status_code == 422 and "text only" in r.text
+
+
+def test_ask_reads_media_files(omni_base, tmp_path):
+    from typer.testing import CliRunner
+
+    from strands_decider.cli import app
+
+    _, ckpt, _, _ = omni_base
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(base64.b64decode(_wav()))
+    png = tmp_path / "a.png"
+    png.write_bytes(base64.b64decode(_png()))
+    out = CliRunner().invoke(
+        app,
+        [
+            "ask",
+            str(ckpt),
+            "--state",
+            "Listen.",
+            "--audio",
+            str(wav),
+            "--image",
+            str(png),
+            "--noul",
+            "Is it loud?",
+            "--device",
+            DEVICE,
+            "--json",
+        ],
+    )
+    assert out.exit_code == 0, out.output
+    assert '"noul"' in out.output
+    help_text = CliRunner().invoke(app, ["serve", "--help"]).output
+    assert "--multimodal" in help_text and "--vision" in help_text
