@@ -235,6 +235,7 @@ NEMOTRON_OMNI = Base(
         "peft",
         "nemotron",
         "nemotron-h",
+        "multimodal",
         "classification",
         "calibration",
         "typed-decisions",
@@ -268,27 +269,35 @@ tag [`{install_ref}`]({repo_url}/tree/{install_ref}) on branch
 branch, and every strands-decider release, cannot load this base yet. The training config is
 [`configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml`]({repo_url}/blob/{install_ref}/configs/v1/swiftpick-30B-A3B-nemotron-v1.yaml).
 
-**Text only, and not the v1 recipe exactly.** The base model is multimodal; this
-checkpoint uses its text decoder alone (transformers' `nemotron_h`, without the base's Hub
-code), so it reads text only. It trains on the 123,339 rows of the
+**Trained on text; reads images, video and audio zero-shot.** The adapter and head were
+trained on the base's text decoder alone (transformers' `nemotron_h`, without the base's Hub
+code). Served with `--multimodal`, the same weights also read images, video and audio
+through the base's own frozen encoders (transformers' native `nemotron_h_omni`); that use
+was never trained, so read the media results below before relying on it
+([docs/multimodal.md]({repo_url}/blob/{install_ref}/docs/multimodal.md)).
+
+**Not the v1 recipe exactly.** It trains on the 123,339 rows of the
 `StrandsAgents/strands-decider-2B-hobson-v21` release, without the v1 releases' 12,263
 code-task rows, which are not public, and each of its three runs has LoRA rank 64
 rather than 16 (the soup's adapter holds the three at rank 192). For comparison with the
 Results below, the Gemma 4 v1 releases score 180 (E2B) to 207 (26B-A4B) of 231 on JevBench
 at the same window.""",
     install="""pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install "strands-decider @ git+{repo_url}@{install_ref}"
+pip install "strands-decider[multimodal] @ git+{repo_url}@{install_ref}"  # [multimodal]: Pillow, PyAV
 # The Mamba kernels as prebuilt wheels for that Python 3.12 / torch 2.10 / CUDA 13 build; the
 # two projects' GitHub releases hold the other builds. A source build needs the CUDA toolkit.
 pip install https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \\
   https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl""",
-    install_ref="swiftpick-30B-A3B-v1",
+    install_ref="swiftpick-30B-A3B-v1-mm",
     limitations="""- **Its yes/no answers hedge.** 32 of its 74 JevBench `noul` answers put P(yes) between 0.20
   and 0.80 (the 26B-A4B v1 release: 15). Read `noul` as a probability: a consumer that acts
   only on confident answers, as JevBench v1.5 does, loses those.
 - **Judgement trails the Gemma 4 26B-A4B v1 release**: HelpSteer2 adequacy 0.744 against
   0.808, BoardgameQA 0.829 against 0.869, JevBench's standard tier 65/72 against 72/72.
 - **No code-task training rows** (see above), and no held-out code evaluation for this model.
+- **Images, video and audio are zero-shot** (never trained). Measured on a few public sets
+  only (Results); with the media missing it still answers at high confidence, so check that
+  they are there. Video reads at most 16 frames, and abstract video questions are weak.
 - **It needs a CUDA GPU with about 80 GB** and the Mamba kernels, and downloads 62.5 GB of
   base weights at first use. There is no practical CPU path: the kernels take CUDA tensors
   only, and without them the PyTorch fallback is many times slower.

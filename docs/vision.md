@@ -1,5 +1,7 @@
 # Images
 
+For images, video and audio on swiftpick-30B-A3B (a Nemotron Omni base), see [multimodal.md](multimodal.md).
+
 Strands Decider answers questions about images when it is loaded with `--vision`. This was
 built and measured on v19 and checked again on v21 and on v1, the current release
 ([How well it does](#how-well-it-does)). No weights change: the published checkpoint is used as is, and the images are read by the

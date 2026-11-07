@@ -746,7 +746,10 @@ def test_a_nemotron_checkpoint_carries_the_nvidia_open_model_agreement(tmp_path)
     assert meta["license_link"] == base.license_link and "nemotron" in meta["tags"]
     readme, licence = (stage / "README.md").read_text(), (stage / "LICENSE.md").read_text()
     assert "same\nApache-2.0 license as this model" not in readme
-    assert "NVIDIA Open Model Agreement" in readme and "Text only" in readme
+    assert (
+        "NVIDIA Open Model Agreement" in readme
+        and "reads images, video and audio zero-shot" in readme
+    )
     assert "not the 128 routed experts" in readme and base.revision_note in readme
     use = readme.split("## Use")[1].split("## Results")[0]
     assert "\npip install strands-decider\n" not in use  # no release loads this base

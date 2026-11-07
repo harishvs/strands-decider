@@ -192,6 +192,11 @@ with the image missing it is more overconfident than v21 on POPE
 ([docs/vision.md](docs/vision.md#v1)). See
 [docs/vision.md](docs/vision.md) for the request shape, how it works and the measurements.
 
+On this branch, swiftpick-30B-A3B (a Nemotron-3-Nano-Omni base) also reads **video and audio**
+with `serve --multimodal` and `ask --image/--video/--audio`, zero-shot: NaturalBench 0.820,
+POPE 0.870, MINDS-14 0.986, Speech Commands 0.963, Perception Test 0.720. See
+[docs/multimodal.md](docs/multimodal.md).
+
 ### Deploying it
 
 The server you ran above is what you deploy. To host it beyond your machine, see
