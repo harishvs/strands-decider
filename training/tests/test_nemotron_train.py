@@ -259,7 +259,7 @@ def test_nemotron_trains_reloads_and_serves(base, tmp_path):
 def test_the_mamba_kernels_run_on_the_decoders_device_not_the_current_one(base):
     """mamba-ssm and causal-conv1d launch on the current CUDA device; a decoder on another
     device computed wrong numbers or NaN until guard_mamba_devices (measured on the 30B)."""
-    path, rows, _ = base
+    path, _, _ = base
     ids = torch.randint(4, 300, (2, 48))
     mask = torch.ones_like(ids)
     out = []

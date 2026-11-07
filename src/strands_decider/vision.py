@@ -425,6 +425,8 @@ class VisionEngine(SystemOneEngine):
 
     def evaluate(self, request: SystemOneRequest) -> SystemOneResponse:
         self._reset_positions()
+        if request.videos or request.audio:
+            raise ValueError("this vision engine reads images only, not video or audio")
         if not request.images:
             return super().evaluate(request)
         if len(request.images) > self.vcfg.max_images:

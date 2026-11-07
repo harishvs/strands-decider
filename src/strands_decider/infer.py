@@ -290,16 +290,24 @@ class SystemOneEngine:
         kinds: list[str],
         offsets: list[list[tuple[int, int]]],
         rendered: list[RenderedQuestion] | None = None,
+        prefix_embeds: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, int]:
-        """Encode the state `s` once, then all question suffixes `q` against that cache."""
+        """Encode the state `s` once, then all question suffixes `q` against that cache.
+
+        `prefix_embeds`, when given, are the state's input embeddings with media spliced in
+        (omni.py); the prefix forward reads them instead of embedding `s`.
+        """
         m = len(q)
         # The suffixes continue an already-tokenised sequence, so _fit adds no BOS to
         # them -- one mid-sequence would be a token training never saw.
         prefix_ids = torch.tensor([s], device=self.device)
         prefix_len = prefix_ids.size(1)
 
+        prefix_in: dict[str, torch.Tensor] = (
+            {"input_ids": prefix_ids} if prefix_embeds is None else {"inputs_embeds": prefix_embeds}
+        )
         prefix_out = self.model.torso(
-            input_ids=prefix_ids,
+            **prefix_in,
             attention_mask=torch.ones_like(prefix_ids),
             use_cache=True,
             return_dict=True,
@@ -339,8 +347,10 @@ class SystemOneEngine:
     # ---- public ----------------------------------------------------------
 
     def evaluate(self, request: SystemOneRequest) -> SystemOneResponse:
-        if request.images:
-            raise ValueError("this engine has no vision tower; serve with --vision for images")
+        if request.images or request.videos or request.audio:
+            raise ValueError(
+                "this engine reads text only; serve with --vision for images, video or audio"
+            )
         names = list(request.questions.keys())
         questions: list[Question] = [request.questions[n] for n in names]
 

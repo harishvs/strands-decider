@@ -101,6 +101,10 @@ class SystemOneRequest(BaseModel):
     # Base64 images (or data: URIs), part of the state. Needs a vision engine
     # (`serve --vision`); a text-only engine refuses them rather than ignore them.
     images: list[str] = Field(default_factory=list)
+    # Base64 videos and audio clips (or data: URIs), also part of the state. Need an engine
+    # on a Nemotron Omni base (`serve --vision`; docs/multimodal.md).
+    videos: list[str] = Field(default_factory=list)
+    audio: list[str] = Field(default_factory=list)
 
 
 class NoulAnswer(BaseModel):
