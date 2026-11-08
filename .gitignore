@@ -40,3 +40,6 @@ dist/
 
 # Local planning notes (requirements, design, todo, worklog)
 tasks/
+
+benchmark/evidence
+benchmark/raw/transcripts
